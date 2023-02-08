@@ -1,14 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useReducer, useState } from 'react';
 import { View, Text, Button, StyleSheet, FlatList, Image, StatusBar, SafeAreaView, Pressable, Platform } from "react-native";
-import { AuthContext, EventEmitDispatchContext, EventEmitStateContext, NostrServerList, UserCredContext } from './AppNav';
+import { AuthContext, EventEmitDispatchContext, EventEmitStateContext, UserCredContext } from './AppNav';
+import { NostrServerList } from "./NostrServerList";
 import ClientWebSocket, { ClientMessage, Event } from "./ClientWebSocket";
-import { HomeScreenProps } from './NavStackParamTypes';
+import { HomeScreenProps, GenericScreenNavigationProp } from './NavStackParamTypes';
 import { Cred } from './security/SecureKeychain';
-//import { secure } from './security/SecureTest';
+
+let profilePic = require('./asset/user.png')
 
 
-//export const ClientSocketContext = React.createContext<string>("");
 let clientSocket : ClientWebSocket;
+let crrMsgCount: number =0;
+let data : Array<ClientMessage> = new Array();
 
 export const HomeScreen = ({ navigation, route }: HomeScreenProps) => {
 
@@ -18,80 +21,73 @@ export const HomeScreen = ({ navigation, route }: HomeScreenProps) => {
     const eventEmitStateContext : Event[] = React.useContext(EventEmitStateContext);
     const eventEmitDispatchContext = React.useContext(EventEmitDispatchContext);
 
-    /*
-    console.log("[HomeScreen] :: cred :: " + cred);
-    console.log("[HomeScreen] :: cred.server :: " + cred.server);
-
-
     const serverList:Array<string> = NostrServerList;
-    //let defaultUrl = "wss://relay.damus.io";
-    //let defaultUrl = "wss://relay.nostr.info"
     let defaultUrl : string = cred.server;
     if(!cred.server) {
         defaultUrl = serverList[0];    
     }
-    
-    let clientSocket : ClientWebSocket = new ClientWebSocket(defaultUrl);
-    console.log("[HomeScreen] :: server :: " + cred.server);
-    */
 
-    const serverList:Array<string> = NostrServerList;
-    //let defaultUrl = "wss://relay.damus.io";
-    //let defaultUrl = "wss://relay.nostr.info"
-    let defaultUrl : string = cred.server;
-    if(!cred.server) {
-        defaultUrl = serverList[0];    
-    }
-    
-    
-    /*
-    if(!cred.server) {
-        //console.log("[HomeScreen] :: server is empty.. signingout");
-        //signOut();
-        console.log("[HomeScreen] :: server url is empty, using default url :: " + defaultUrl);
-        clientSocket = new ClientWebSocket(defaultUrl);
-    } else {
-        try{
-            //const clientSocket = new ClientWebSocket("wss://relay.damus.io");
-            clientSocket = new ClientWebSocket(cred.server);
-            console.log("[HomeScreen] :: server :: " + cred.server);
-            //const userService = new UserService(clientSocket);
-        } catch (e) {
-            console.log("[HomeScreen] :: unable to init ClientWebSocket!");
-            signOut();
+    type MsgActionType = {type:string, msg:ClientMessage};
+    const msgReducer = (prevMsgs : ClientMessage[] , action : MsgActionType) => {
+        switch (action.type) {
+            case 'ADD' : {
+                return [
+                    ...prevMsgs,
+                    action.msg,
+                ];
+            }
         }
+        return prevMsgs;
     }
-    */
+    const [msgs, setMsgs] = useReducer<typeof msgReducer , Array<ClientMessage>> (
+        msgReducer, new Array<ClientMessage>(), arr => arr);
 
-    //function HomeScreen ({ navigation } : HomeScreenProps) {
-    [msgs, setMsgs] = useState<Array<ClientMessage>>([]);
-    [metaMsgs, setMetaMsgs] = useState<Map<string, ClientMessage>>(new Map());
-    [mapIdMsgs, setMapIdMsgs] = useState<Map<string, ClientMessage>>(new Map());
+    type MetaMsgActionType = {type:string, msg:ClientMessage};
+    const metaMsgsReducer = (prevMetaMsg: Map<string, ClientMessage>, action: MetaMsgActionType) => {
+        switch (action.type) {
+            case 'ADD' : {
+                let newMetaMsgs = new Map(prevMetaMsg);
+                newMetaMsgs.set(action.msg.fullEvent.pubkey, action.msg);
+                //setMetaMsgs(newMetaMsgs);
+                return newMetaMsgs;
+            }
+        }
+        return prevMetaMsg;
+    }
+    const [metaMsgs, setMetaMsgs] = useReducer<typeof metaMsgsReducer , Map<string, ClientMessage>>(
+        metaMsgsReducer, new Map<string, ClientMessage>(), arr => arr);
 
+    type IdMsgsActionType = {type:string, msg:ClientMessage};
+    const idMsgsReducer = (prevIdMsgMsg: Map<string, ClientMessage>, action: IdMsgsActionType) => {
+        switch (action.type) {
+            case 'ADD' : {
+                let newMapIdMsgs = new Map(prevIdMsgMsg);
+                newMapIdMsgs.set(action.msg.fullEvent.id, action.msg);
+                return newMapIdMsgs;
+            }
+        }
+        return prevIdMsgMsg;
+    }
+    const [mapIdMsgs, setMapIdMsgs] = useReducer<typeof idMsgsReducer , Map<string, ClientMessage>>(
+        idMsgsReducer, new Map<string, ClientMessage>(), arr => arr);
 
     useEffect(() => {
         console.log("[HomeScreen] :: cred :: " + cred);
         console.log("[HomeScreen] :: cred.server :: " + cred.server);
-        
-        clientSocket = new ClientWebSocket(defaultUrl);
+
+        clientSocket = ClientWebSocket.getInstance();
+        clientSocket.addDefaultRelayUrl(defaultUrl);
         console.log("[HomeScreen] :: server :: " + cred.server);
 
-
-
-        //clientSocket.addRemoteUrl("wss://relay.damus.io/");
         clientSocket.addRemoteUrl(serverList);
-        clientSocket.openConnections(msgHandler);
-        /*
-        let s = secure()
-            .then(() => console.log("[useEffect] :: secure call done!"))
-            .catch(error => console.log("[useEffect] :: something went wrong with secure call" + error));
-        */
+        clientSocket.openConnections(msgHandler)
+            .then((e)=>{console.log("[HomeScreen] :: [useEffect] :: [openConnections] :: done!")})
+            .catch((e)=>{console.log("[HomeScreen] :: [useEffect] :: [openConnections] :: something went wrong, " + e)});
+
         console.log("[HomeScreen] :: [useEffect] :: Platform.OS " + Platform.OS);
         console.log("[HomeScreen] :: [useEffect] :: Platform.OS " + Platform.Version);
         return () => {
-            console.log("closing connection...");
-            clientSocket.closeConnection();
-            console.log("connections closed!");
+            sendCloseReqToSockets();
         };
 
     }, []);
@@ -108,79 +104,78 @@ export const HomeScreen = ({ navigation, route }: HomeScreenProps) => {
                 clientSocket.sendEvent(event);
                 console.log("[HomeScreen] :: [useEffect] :: event :: " + JSON.stringify(event));
                 console.log("[HomeScreen] :: [useEffect] :: deleting event :: " + JSON.stringify(event));
-                eventEmitDispatchContext({
-                    type: "delete",
-                    id: event.id
-                })
+                if(eventEmitDispatchContext) {
+                    eventEmitDispatchContext({
+                        type: "delete",
+                        id: event.id
+                    })
+                }
                 console.log("[HomeScreen] :: [useEffect] :: after delete event length :: " + JSON.stringify(eventEmitStateContext.length));
             }            
         }
         console.log("[HomeScreen] :: [useEffect] :: event :: " + JSON.stringify(eventEmitStateContext));
         console.log("[HomeScreen] :: [useEffect] :: event :: end");
-    },[eventEmitStateContext]);
+    },[eventEmitStateContext]);    
 
-    // when new event(msg) is sent through MessageScreen
-    /*
     useEffect(()=>{
-        route
-    });
-
-    if(route.params) {
-        if(route.params.event) {
-            let event : Event = JSON.parse(route.params.event)
-            console.log("[HomeScreen] :: event :: " + route.params.event);
-            console.log("[HomeScreen] :: event :: " + JSON.stringify(event));
-            clientSocket.sendEvent(event);
-            console.log("[HomeScreen] :: sent event :: " + route.params.event);
-        } else {
-            console.log("[HomeScreen] :: no event to send");
+        console.log("[HomeScreen] :: [useEffect] :: start");
+        console.log("[HomeScreen] :: [useEffect] :: msgs.length-crrMsgCount == " + (msgs.length-crrMsgCount));
+        if((msgs.length-crrMsgCount)>=10) {
+            console.log("[HomeScreen] :: [useEffect] :: msgs.length-crrMsgCount>=20 :: closing sockets start");
+            resetCount();
+            console.log("[HomeScreen] :: [useEffect] :: crrMsgCount :: " + crrMsgCount);
+            sendCloseReqToSockets();
+            console.log("[HomeScreen] :: [useEffect] :: msgs.length-crrMsgCount>=20 :: closing sockets end");
+            console.log("[HomeScreen] :: [useEffect] :: msgs.length == " + msgs.length);
+            console.log("[HomeScreen] :: [useEffect] :: crrMsgCount == " + crrMsgCount);
+            console.log("[HomeScreen] :: [useEffect] :: msgs.length-crrMsgCount == " + (msgs.length-crrMsgCount));
         }
+    })
+
+    const resetCount = () => {
+        crrMsgCount = msgs.length;
     }
-    */
-    
 
     const msgHandler = (msg: ClientMessage, kind: number) => {
-        if (msg.kind == 0) {
-            if (!mapIdMsgs.has(msg.id)) {
-                let newMetaMsgs = new Map(metaMsgs);
-                newMetaMsgs.set(msg.fullEvent.pubkey, msg);
-                setMetaMsgs(newMetaMsgs);
+        if (!mapIdMsgs.has(msg.id)) {
+            console.log("[HomeScreen] :: [useEffect] :: [msgHandler] :: msg.id :: " + msg.id);
+            console.log("[HomeScreen] :: [useEffect] :: [msgHandler] :: mapIdMsgs.has(msg.id) :: " + mapIdMsgs.has(msg.id));
+            if (msg.kind == 0) {
+                setMetaMsgs({
+                    type: 'ADD',
+                    msg: msg,
+                });
+            } else {
+                setMsgs({
+                    type: 'ADD',
+                    msg: msg,
+                });
             }
-        } else {
-            if (!mapIdMsgs.has(msg.id)) {
-                /*
-                let newMsgs = msgs.slice();
-                newMsgs.push(msg);
-                setMsgs(newMsgs);
-                */
-                setMsgs([...msgs, msg,]);
-            }
+            setMapIdMsgs({
+                type: 'ADD',
+                msg: msg,
+            });
         }
-        let newMapIdMsgs = new Map(mapIdMsgs);
-        newMapIdMsgs.set(msg.id, msg);
-        setMapIdMsgs(newMapIdMsgs);
     };
 
     const signOutAndCloseSockets = () => {
-        console.log("closing connection...");
-        clientSocket.closeConnection();
-        console.log("connections closed!");
+        sendCloseReqToSockets();
         signOut();
     }
 
-    const closeAppSocket = () => {
+    const sendCloseReqToSockets = () => {
         console.log("closing connection...");
         clientSocket.closeConnection();
         console.log("connections closed!");
     };
 
-    const renderItem = ({ item }) => {
+    const renderItem = ({ item } : {item : ClientMessage}) => {
         let parentMsg = undefined;
 
         if (item && item.fullEvent) {
             let fullEvent = item.fullEvent;
 
-            let tags: [[]] = fullEvent.tags;
+            let tags: Array<Array<string>> = fullEvent.tags;
             if (tags && tags.length > 0) {
                 let tag: string[] = tags.reduce((prevValue, currValue) => {
                     if (currValue[0] === "e") {
@@ -196,155 +191,127 @@ export const HomeScreen = ({ navigation, route }: HomeScreenProps) => {
                 }
             }
         }
-        const childData = { item: item, metaMsgs: metaMsgs };
+        const childData = { item: item, metaMsg: metaMsgs.get(item.fullEvent.pubkey) };
         if (parentMsg) {
-            const parentData = { item: parentMsg, metaMsgs: metaMsgs };
+            const parentData = { item: parentMsg, metaMsg: metaMsgs.get(parentMsg.fullEvent.pubkey) };
             return (
-                /*
                 <View style={styles.itemContainer}>
                     <View style={styles.childItem}>
-                        <UserName msg={item}></UserName>
-                        <Text style={{fontSize:24, padding:20}}>{item.msg}</Text>
+                        <ViewPressableMessage navigation={navigation} data={childData} ></ViewPressableMessage>
                     </View>
                     <View style={styles.parentItem}>
-                        <UserName msg={parentMsg}></UserName>
-                        <Text style={{fontSize:24, padding:20}}>{parentMsg.msg}</Text>
+                        <ViewPressableMessage navigation={navigation} data={parentData} ></ViewPressableMessage>
                     </View>
                 </View>
-                */
-                /*
-                <View style={styles.itemContainer}>
-                    <ViewPressableMessageDetails viewStyle={styles.childItem} item={item} metaMsgs={metaMsgs} ></ViewPressableMessageDetails>
-                    <ViewPressableMessageDetails viewStyle={styles.parentItem} item={parentMsg} metaMsgs={metaMsgs} ></ViewPressableMessageDetails>
-                </View>
-                */
-                <View style={styles.itemContainer}>
-                    <Pressable onPress={() => navigation.navigate('Details', childData)}>
-                        <View style={styles.childItem}>
-                            <UserName msg={item} metaMsgs={metaMsgs}></UserName>
-                            <Text selectable={true} selectionColor='grey' style={{ fontSize: 24, padding: 20 }}>
-                                {item.msg.substring(0, 250)}
-                                {item.msg.length>250 ? " ..." : ""}
-                            </Text>
-                        </View>
-                    </Pressable>
-
-                    <Pressable onPress={() => navigation.navigate('Details', parentData)}>
-                        <View style={styles.parentItem}>
-                            <UserName msg={parentMsg} metaMsgs={metaMsgs}></UserName>
-                            <Text selectable={true} selectionColor='grey' style={{ fontSize: 24, padding: 20 }}>
-                                {parentMsg.msg.substring(0, 250)}
-                                {parentMsg.msg.length>250 ? " ..." : ""}
-                            </Text>
-                        </View>
-                    </Pressable>
-                </View>
-
             );
         }
 
         return (
             <View style={styles.itemContainer}>
-                <Pressable onPress={() => navigation.navigate('Details', childData)}>
-                    <View style={styles.childItem}>
-                        <UserName msg={item} metaMsgs={metaMsgs}></UserName>
-                        <Text selectable={true} selectionColor='grey' style={{ fontSize: 24, padding: 20 }}>
-                            {item.msg.substring(0, 250)}
-                            {item.msg.length>250 ? " ..." : ""}
-                        </Text>
-                    </View>
-                </Pressable>
-            </View>
-            //<ViewPressableMessageDetails viewStyle={styles.itemContainer} item={item} metaMsgs={metaMsgs} ></ViewPressableMessageDetails>
-            /*
-            <Pressable onPress={onPressFunction}>
-                <ViewMessage viewStyle={styles.itemContainer} msg={item} ></ViewMessage>
-                <View style={styles.itemContainer}>
-                    <UserName msg={item}></UserName>
-                    <Text style={{fontSize:24, padding:20}}>{item.msg}</Text>
+                <View style={styles.childItem}>
+                    <ViewPressableMessage navigation={navigation} data={childData} ></ViewPressableMessage>
                 </View>
-            </Pressable>
-            */
+            </View>
         );
     };
 
-    /*
-    type HomeScreenNavigationProp = NativeStackNavigationProp<
-    RootStackParamList,
-    'Home'
-    >;
-    type HomeScreenRouteProp = RouteProp<RootStackParamList, 'Home'>;
-    */
-    /*
-    function ViewPressableMessageDetails (props : any) {
-        //let navigation : HomeScreenNavigationProp = props.navigation;
-        const item : ClientMessage = props.item;
-        const metaMsgs : Map<string, ClientMessage> = props.metaMsgs;
-        const data = {item : item, metaMsgs : metaMsgs};
-        return (
-            <Pressable onPress={() => navigation.navigate('Details', data) }>
-                <ViewMessage viewStyle={props.viewStyle} item={props.item} metaMsgs={props.metaMsgs}></ViewMessage>
-            </Pressable>
-        );
+    [refresh, setRefresh] = useState(false);
+
+    const ITEM_HEIGHT : number = 300;
+    
+    if(data.length===0) {
+        data = msgs.filter((m)=>m.kind!==0);
     }
-    */
-    /*
-        <Text>This is a test App!</Text>
-        <Button
-            onPress={closeAppSocket}
-            title="Close!"
-        />
-    */
-    console.log("[HomeScreen] :: [HomeScreen] :: [cred] " + JSON.stringify(cred));
-    //const msgScreenParams = {clientSocket : clientSocket};
+
+    const refreshData = ()=>{
+        setRefresh(true);
+        getMessagesFromBuffer();
+        setRefresh(false);
+    }
+    const getMessagesFromBuffer = () => {
+        console.log("[HomeScreen] :: [getMessagesFromBuffer] :: start :: [data] " + JSON.stringify(data));
+        if(data.length <= mapIdMsgs.size){
+            let idMsgValuearr = Array.from(mapIdMsgs.values()).filter((m)=>m.kind!==0);
+            let lastIndx = data.length;
+            data.push(...idMsgValuearr.slice(lastIndx));
+        }
+        console.log("[HomeScreen] :: [getMessagesFromBuffer] :: end :: [data] " + JSON.stringify(data));
+        console.log("[HomeScreen] :: [getMessagesFromBuffer] :: sendInitFiltersToOpenSockets start");
+        clientSocket.sendInitFiltersToOpenSockets();
+        console.log("[HomeScreen] :: [getMessagesFromBuffer] :: sendInitFiltersToOpenSockets end");
+    }
+
     return (
-        
-
         <SafeAreaView style={styles.container}>
-            {cred && 
-                <>
-                    <Text selectable={true} selectionColor='grey' style={{fontSize:20}}>{cred.username}</Text>
-                    <Text selectable={true} selectionColor='grey' style={{fontSize:20}}>{cred.bech32Pub}</Text>
-                    <Text selectable={true} selectionColor='grey' style={{fontSize:20}}>primary server :: {cred.server}</Text>
-                </>
-            }
-            <Button title="Sign out" onPress={() => signOutAndCloseSockets()} />
+            <View style={{flexGrow : 2}}>
+                <Button title="Sign out" onPress={() => signOutAndCloseSockets()} />
+                <Button
+                    onPress={() => navigation.navigate('Message')}
+                    title="Write Message" />
+            </View>
             <FlatList
-                data={msgs}
+                style={{flexGrow : 8}}
+                //data={msgs}
+                data={data}
                 renderItem={renderItem}
-                keyExtractor={(msg) => msg.id} />
-            <Button
-                onPress={() => navigation.navigate('Message')}
-                //onPress={() => navigation.navigate('Message', msgScreenParams)}
-                //onPress={() => navigation.navigate('Message')}
-                title="Write Message" />
+                keyExtractor={(msg) => msg.id}
+                getItemLayout={(data, index) => (
+                    {length: ITEM_HEIGHT, offset: ITEM_HEIGHT * index, index}
+                  )}
+                onEndReached={(info: {distanceFromEnd: number}) => {
+                    //clientSocket.sendInitFiltersToOpenSockets();
+                    getMessagesFromBuffer();
+                }}
+                onRefresh={()=>{refreshData();}}
+                refreshing={refresh}
+                bounces={true}
+            />
         </SafeAreaView>
-
-        
     );
-
 };
 
+export type MsgMetaMsgType = { item: ClientMessage, metaMsg: ClientMessage};
+
+function ViewPressableMessage({navigation, data} : {navigation: any, 
+                            data : MsgMetaMsgType}) {
+    let item = data.item;
+    let metaMsg = data.metaMsg;
+    return (
+        <Pressable onPress={() => navigation.navigate('Details', data)}>
+            <UserName data={data} navigation={navigation}></UserName>
+            <Text selectable={true} selectionColor='grey' style={styles.msgText}>
+                {item.msg.substring(0, 250)}
+                {item.msg.length > 250 ? " ..." : ""}
+            </Text>
+            <Text>{new Date(item.fullEvent.created_at * 1000).toLocaleString()}</Text>
+        </Pressable>
+    );
+}
+
 export function ViewMessage(props: any) {
+    let data : MsgMetaMsgType = {item:props.item, metaMsg: props.metaMsg}
     return (
         <View style={props.viewStyle}>
-            <UserName msg={props.item} metaMsgs={props.metaMsgs}></UserName>
-            <Text style={{ fontSize: 24, padding: 20 }}>{props.item.msg}</Text>
+            <UserName data={data} navigation={props.navigation} ></UserName>
+            <Text selectable={true} selectionColor='grey' style={styles.msgText}>{props.item.msg}</Text>
+            <Text>{new Date(props.item.fullEvent.created_at * 1000).toLocaleString()}</Text>
         </View>
     );
 }
-const UserName = (props: any) => {
-    let item = props.msg;
-    let metaMsgs = props.metaMsgs;
+
+export type UserNameType = {data: MsgMetaMsgType, navigation: GenericScreenNavigationProp}
+export const UserName = (props: UserNameType) => {
+    let item : ClientMessage = props.data.item;
+    let metaMsg : ClientMessage = props.data.metaMsg;
+    let navigation: GenericScreenNavigationProp = props.navigation;
     let userImg = "";
     let userName = "";
 
     if (item && item.fullEvent) {
         userImg = "";
         userName = item.fullEvent.pubkey.substring(0, 15) + "...";
-
-        let clientMsg = metaMsgs.get(item.fullEvent.pubkey);
-        if (clientMsg) {
+        let clientMsg = metaMsg;
+        if (clientMsg && clientMsg.msg) {
             const msgContentJson = JSON.parse(clientMsg.msg);
             userName = msgContentJson.name;
             userImg = msgContentJson.picture;
@@ -353,18 +320,21 @@ const UserName = (props: any) => {
 
     if (userImg) {
         return (
-            //<View style={styles.item}>
-            <View>
-                <Image style={styles.tinyLogo} source={{ uri: userImg }}></Image>
-                <Text selectable={true} selectionColor='grey' style={{ fontSize: 24, padding: 20, textAlign: 'left' }}>{userName}</Text>
-            </View>
+            <Pressable onPress={() => navigation.navigate('UserDetail', props.data)}>
+                <View>
+                    <Image style={styles.tinyLogo} source={{ uri: userImg }}></Image>
+                    <Text selectable={true} selectionColor='grey' style={styles.msgText}>{userName}</Text>
+                </View>
+            </Pressable>
         );
     } else {
         return (
-            //<View style={styles.item}>
-            <View>
-                <Text selectable={true} selectionColor='grey' style={{ fontSize: 24, padding: 20, textAlign: 'left' }}>{userName}</Text>
-            </View>
+            <Pressable onPress={() => navigation.navigate('UserDetail', props.data)}>
+                <View>
+                    <Image style={styles.tinyLogo} source={profilePic}></Image>
+                    <Text selectable={true} selectionColor='grey' style={styles.msgText}>{userName}</Text>
+                </View>
+            </Pressable>
         );
     };
 };
@@ -373,12 +343,14 @@ const UserName = (props: any) => {
 
 export const styles = StyleSheet.create({
     container: {
-        flex: 1,
+        //flex: 0,
         marginTop: StatusBar.currentHeight || 0,
+        display:'flex',
+        alignItems: 'stretch',
     },
     itemContainer: {
         backgroundColor: '#f5f5f7',
-        padding: 20,
+        padding: 10,
         marginVertical: 8,
         marginHorizontal: 16,
     },
@@ -387,7 +359,7 @@ export const styles = StyleSheet.create({
     },
     parentItem: {
         backgroundColor: '#f5f5ff',
-        padding: 20,
+        padding: 12,
         marginVertical: 8,
         marginHorizontal: 16,
     },
@@ -401,5 +373,16 @@ export const styles = StyleSheet.create({
     logo: {
         width: 66,
         height: 58,
+    },
+    msgText : {
+        fontSize: 22,
+        fontFamily:'sans-serif',
+        //font-family: 'sans-serif',
+        //'lucida grande', 
+        //tahoma, verdana, arial, sans-serif,
+        padding: 12,
+        paddingTop:20,
+        paddingBottom:20,
+        textAlign: 'left' 
     },
 });

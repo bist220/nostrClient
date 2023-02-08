@@ -30,18 +30,31 @@ export class Event {
     "sig": string;          //<64-bytes signature of the sha256 hash of the serialized event data, which is the same as the "id" field>
 }
 
+/*
+    {
+    "ids": <a list of event ids or prefixes>,
+    "authors": <a list of pubkeys or prefixes, the pubkey of an event must be one of these>,
+    "kinds": <a list of a kind numbers>,
+    "#e": <a list of event ids that are referenced in an "e" tag>,
+    "#p": <a list of pubkeys that are referenced in a "p" tag>,
+    "since": <an integer unix timestamp, events must be newer than this to pass>,
+    "until": <an integer unix timestamp, events must be older than this to pass>,
+    "limit": <maximum number of events to be returned in the initial query>
+    }
+*/
+
 export class Filter {
     "ids": string[]     //<a list of event ids or prefixes>,
     "authors": string[] //<a list of pubkeys or prefixes, the pubkey of an event must be one of these>,
     "kinds": number[]   //<a list of a kind numbers>,
     "#e": string[]      //<a list of event ids that are referenced in an "e" tag>,
     "#p": string[]      //<a list of pubkeys that are referenced in a "p" tag>,
-    "since": string     //<a timestamp, events must be newer than this to pass>,
-    "until": string     //<a timestamp, events must be older than this to pass>,
+    "since": number     //<an integer unix timestamp, events must be newer than this to pass>,
+    "until": number     //<an integer unix timestamp, events must be older than this to pass>,
     "limit": number     //<maximum number of events to be returned in the initial query>
 }
 
-enum RequestId {
+export enum RequestId {
     EVENT = "cn",
     METADATA = "req_cn",
     EVENTREQ = "event_req_cn",
@@ -52,10 +65,15 @@ type EventReqType = [
         event : Event
     ];
 
-
-import ClientCrypto from "./ClientCrypto";
+enum TotalSeconds {
+    SECOND = 1,
+    MINUTE = 60 * SECOND,
+    HOUR = 60 * MINUTE,
+    DAY = 24 * HOUR,
+}
 
 class ClientWebSocket {
+    urlSocketMap : Map<string, WebSocket> = new Map<string, WebSocket>();
     sockets : WebSocket[] = [];
     //remoteUrls : string[] = [];
     remoteUrls : Set<string> = new Set();
@@ -64,9 +82,11 @@ class ClientWebSocket {
     queuedEventsToPublish : Set<EventReqType> = new Set();
 
     //static readonly defaultRelayUrl : string = "wss://relay.damus.io";
-    defaultRelayUrl : string;
+    defaultRelayUrl : string = "";
     //crypto : ClientCrypto = new ClientCrypto("");
+    static clientWebSocket : ClientWebSocket;
 
+    /*
     constructor(defaultUrl : string) {
         if (!defaultUrl) {
             console.log("[ClientWebSocket] :: [constructor] :: defaultUrl is null");
@@ -75,17 +95,23 @@ class ClientWebSocket {
         this.defaultRelayUrl = defaultUrl;
         console.log("[ClientWebSocket] :: [constructor] :: defaultUrl :: " + defaultUrl);
         this.addRemoteUrl([this.defaultRelayUrl]);
-    }
-
-    /*
-    newSocketListener(socket:WebSocket, referRemoteUrl:string) {
-        console.log("[newSocketListener] :: [socket event] :: captured 'new-socket' event");
-        this.sockets.push(socket);
-        if(socket && !this.connectedUrls.includes(referRemoteUrl)) {
-            this.connectedUrls.push(referRemoteUrl);
-        }
+        ClientWebSocket.clientWebSocket = this;
     }
     */
+   private constructor(){}
+
+    static getInstance() : ClientWebSocket {
+        if(!this.clientWebSocket) {
+            this.clientWebSocket = new ClientWebSocket();
+        }
+        return this.clientWebSocket;
+    }
+    
+    addDefaultRelayUrl(defaultUrl : string) {
+        this.defaultRelayUrl = defaultUrl;
+        console.log("[ClientWebSocket] :: [constructor] :: defaultUrl :: " + defaultUrl);
+        this.addRemoteUrl([this.defaultRelayUrl]);
+    }
 
     addRemoteUrl(urls: string[]) {
         //console.log("[addRemoteUrl] :: publicKey :: " + this.crypto.publicKey);
@@ -99,14 +125,14 @@ class ClientWebSocket {
         });
     }
 
-    openConnections(msgHandler : (msg: any , kind: number) => any, 
+    async openConnections(msgHandler : (msg: any , kind: number) => any, 
             onOpenReq? : (subId: String | undefined, filters?: Filter[], url?: string)=>any,
             reqId?:string, filters? : Filter[]) {
         if(this.remoteUrls.size===0) throw new Error("Add atleast one relay url");
         this.createConnection(msgHandler, onOpenReq, reqId, filters);
     }
 
-    createConnection(msgHandler : (msg: any , kind: number) => any, 
+    async createConnection(msgHandler : (msg: any , kind: number) => any, 
             onOpenReq? : (subId: String | undefined, filters?: Filter[], url?: string)=>any, 
             reqId?:string, eventReqfilters? : Filter[]) {
         console.log("[ClientWebSocket] :: [createConnection] :: creating connections...");
@@ -115,19 +141,12 @@ class ClientWebSocket {
             const socket = new WebSocket(url);
             socket.onopen = () => {
                 this.sockets.push(socket);
+                this.urlSocketMap.set(url, socket);
                 console.log("[ClientWebSocket] :: [createConnection] :: socket added :: " + JSON.stringify(socket));
                 this.connectedUrls.push(url);
                 console.log("[ClientWebSocket] :: [createConnection] :: url added to connectedUrls :: " + JSON.stringify(url));
 
-                const initfilters: Filter[] = []
-                for(let i=0; i<3; i++) {
-                    let filter = new Filter();
-                    filter.limit = 2;
-                    filter.kinds = [i];
-                    initfilters.push(filter);
-                }
-                console.log("[ClientWebSocket] :: [createConnection] :: initfilters :: " + initfilters);
-                this.sendReq(RequestId.EVENT /*ClientWebSocket.subId*/, initfilters);
+                this.sendInitFilters(url);
                 
                 // queued events
                 if(this.queuedEventsToPublish){
@@ -173,22 +192,45 @@ class ClientWebSocket {
                         msgHandler(msg, kind);
                         this.metaMessages.push(msg);
                     } else {
-                        this.handleReplyMention(eventMsg, msgHandler);
-                        this.getUserDetails(RequestId.METADATA /*ClientWebSocket.metaReqId*/, eventMsg.pubkey);
                         const msg : ClientMessage = {"id" : msgId , "msg" : msgValue, "fullEvent": eventMsg, "kind" : kind , "remoteUrl" : socket.url};
-                        console.log("eventMsg:: " + msgId + " : ");
                         msgHandler(msg, kind);
+                        this.handleReplyMention(msg, msgHandler).catch((e)=>console.log("[error] :: [ClientWebSocket] :: [onMessage] :: [handleReplyMention] :: something went wrong, " + e));
+                        this.getUserDetails(RequestId.METADATA /*ClientWebSocket.metaReqId*/, eventMsg.pubkey, socket.url).catch((e)=>console.log("[error] :: [ClientWebSocket] :: [onMessage] :: [getUserDetails] :: something went wrong, " + e));
+                        console.log("eventMsg:: " + msgId + " : ");
+                        //msgHandler(msg, kind);
                     }
                 }
                 if (eventType===MessageType.NOTICE) {
-                    console.log("notice :: ");
+                    console.log("[notice] :: url :: " + socket.url);
                     console.log(data);
                 }
             }
         }
     }
 
-    handleReplyMention(eventMsg: Event, msgHandler: (msg: any, kind: number) => any) {
+    sendInitFilters(url: string) {
+        const initfilters: Filter[] = [];
+        for (let i = 0; i < 3; i++) {
+            let filter = new Filter();
+            filter.limit = 5;
+            filter.kinds = [i];
+            //filter.since = Math.floor(Date.now()/1000) - TotalSeconds.DAY;
+            filter.since = Math.floor(Date.now()/1000);
+            initfilters.push(filter);
+        }
+        console.log("[ClientWebSocket] :: [createConnection] :: initfilters :: " + initfilters);
+        this.sendReq(RequestId.EVENT /*ClientWebSocket.subId*/, initfilters, url);
+    }
+
+    async sendInitFiltersToOpenSockets() {
+        //this.connectedUrls
+        this.sockets.forEach((socket)=>{
+            this.sendInitFilters(socket.url);
+        });
+    }
+
+    async handleReplyMention(msg: ClientMessage, msgHandler: (msg: any, kind: number) => any) {
+        let eventMsg : Event = msg.fullEvent;
         if(eventMsg) {
             let tags:Array<Array<string>> = eventMsg.tags;
             console.log("[handleReplyMention] tags :: " + JSON.stringify(tags));
@@ -235,7 +277,7 @@ class ClientWebSocket {
 
                         if(!referRemoteUrl) {
                             console.log("[handleReplyMention] sending eventId req to already existing referRemoteUrl :: " + referRemoteUrl);
-                            this.sendReq(RequestId.EVENTREQ /*ClientWebSocket.eventReqId*/, [filter]);
+                            this.sendReq(RequestId.EVENTREQ /*ClientWebSocket.eventReqId*/, [filter], msg.remoteUrl);
                         }
                         //if(referRemoteUrl && this.connectedUrls.includes(referRemoteUrl)) {
                         if(referRemoteUrlConnected) {
@@ -256,7 +298,7 @@ class ClientWebSocket {
         }
     }
 
-    sendMessage(type:MessageType ,url? : string, subId?:String, event?:object, filters?: Filter[]) {
+    async sendMessage(type:MessageType ,url? : string, subId?:String, event?:object, filters?: Filter[]) {
         switch (type) {
             case MessageType.EVENT: {
                 this.sendEvent(event, url);
@@ -274,11 +316,11 @@ class ClientWebSocket {
         }
     }
 
-    sendEvent(event: object | undefined, url?: string) {
+    async sendEvent(event: object | undefined, url?: string) {
         const req = [MessageType.EVENT, event];
         this.sendToSocket(req, url);
     }
-    sendReq(subId: String | undefined, filters?: Filter[], url?: string) {
+    async sendReq(subId: String | undefined, filters?: Filter[], url?: string) {
         const req : any = [MessageType.REQ, subId];
         console.log("[sendReq] :: filters " + filters);
         if(filters) {
@@ -297,7 +339,7 @@ class ClientWebSocket {
             this.sendToAllSockets(req);
         }
     }
-    sendClose(subId: String | undefined) {
+    async sendClose(subId: String | undefined) {
         console.log("[sendClose] :: subId :: " + subId);
         const req = [MessageType.CLOSE, subId];
         this.sendToAllSockets(req);
@@ -308,18 +350,21 @@ class ClientWebSocket {
         const reqJ = JSON.stringify(req);
         console.log(reqJ);
         console.log("[sendToSocket] :: reqJ :: " + reqJ)
-
-        this.asyncSendToSocket(url, reqJ)
-            .then(()=>{
-                    console.log("[sendToSocket] :: [asyncSendToSocket] :: [then] :: req event sent :: reqJ :: " + JSON.stringify(reqJ));
-                }
-            )
-            .catch(e=>{
-                console.log("[sendToSocket] :: [asyncSendToSocket] :: unable to send event reqJ :: " + reqJ);
-                console.log("[sendToSocket] :: [asyncSendToSocket] :: err :: " + e);
-                this.queuedEventsToPublish.add(req)
-                console.log("[sendToSocket] :: [asyncSendToSocket] :: [queuedEventsToPublish] event queued :: " + reqJ);
-            });
+        try{
+            this.asyncSendToSocket(url, reqJ)
+                .then(()=>{
+                        console.log("[sendToSocket] :: [asyncSendToSocket] :: [then] :: req event sent :: reqJ :: " + JSON.stringify(reqJ));
+                    }
+                )
+                .catch(e=>{
+                    console.log("[sendToSocket] :: [asyncSendToSocket] :: unable to send event reqJ :: " + reqJ);
+                    console.log("[sendToSocket] :: [asyncSendToSocket] :: err :: " + e);
+                    this.queuedEventsToPublish.add(req)
+                    console.log("[sendToSocket] :: [asyncSendToSocket] :: [queuedEventsToPublish] event queued :: " + reqJ);
+                });
+        } catch(e) {
+            console.log("[sendToSocket] :: while asyncSendToSocket :: something went wrong, " + e);
+        }
     }
 
     // to send failed events on default or registered server
@@ -331,25 +376,29 @@ class ClientWebSocket {
             url = this.defaultRelayUrl;
         }
         console.log("[asyncSendToSocket] :: url :: " + url);
-        console.log("[asyncSendToSocket] :: outside if condition :: sockets :: " + JSON.stringify(this.sockets));
-        if(this.sockets && this.sockets.length>0) {
+        //console.log("[asyncSendToSocket] :: outside if condition :: sockets :: " + JSON.stringify(this.sockets));
+        
+        if(this.urlSocketMap.size>0 && this.urlSocketMap.has(url)) {
             console.log("[asyncSendToSocket] :: inside if condition :: ");
-            console.log("[asyncSendToSocket] :: inside if condition :: sockets :: " + JSON.stringify(this.sockets));
-            this.sockets.forEach(socket => {
-                console.log("[asyncSendToSocket] :: sending to url : " + url);
-                if (socket.url === url) {
-                    socket.send(reqJ);
-                    console.log("[asyncSendToSocket] :: reqJ :: " + reqJ);
-                }
-            });
-        } else {
+            //console.log("[asyncSendToSocket] :: inside if condition :: sockets :: " + JSON.stringify(this.sockets));
+            try {
+                this.urlSocketMap.get(url)?.send(reqJ);
+                console.log("[asyncSendToSocket] :: reqJ :: " + reqJ);
+            } catch (error) {
+                console.log("[asyncSendToSocket] :: error :: " + error);
+                throw error;//(error);
+            }
+        }
+
+        else {
             console.log("[asyncSendToSocket] :: sockets not initialized, throwing error :: " + reqJ);
             throw new Error("Waiting for sockets to initialize...");
         }
+        
     }
 
     //sendToAllSockets(req: (String | MessageType | object | undefined)[]) {
-    sendToAllSockets(req: any) {
+    async sendToAllSockets(req: any) {
         const reqJ = JSON.stringify(req);
         console.log("[sendToAllSockets] :: sending to all sockets reqJ :: " + reqJ);
         this.sockets.forEach(socket => {
@@ -374,14 +423,17 @@ class ClientWebSocket {
         console.log("[ClientWebSocket] :: [reqEventByEventId] :: end");
     }
 
-    getUserDetails(subId: string, pubkey: string) {
+    async getUserDetails(subId: string, pubkey: string, url? : string) {
         const filters: Filter[] = []
         let filter = new Filter();
         filter.limit = 2;
         filter.kinds = [0];
         filter.authors = [pubkey];
         filters.push(filter);
-        this.sendReq(subId, filters);
+        if(url) {
+            console.log("[ClientWebSocket] :: [getUserDetails] :: url :: " + url);
+            this.sendReq(subId, filters, url);
+        }
     }
 }
 

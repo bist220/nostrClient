@@ -1,17 +1,18 @@
 import * as React from 'react';
-import { Button, Text, TextInput, View, FlatList, Pressable, Modal, StyleSheet, ScrollView, Alert } from 'react-native';
+import { Button, Text, TextInput, View, FlatList, Pressable, Modal, StyleSheet, ScrollView, Alert, Image } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
-//import { createStackNavigator } from '@react-navigation/stack';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import ClientCrypto, { Bech32PrefixCode } from './ClientCrypto';
 import { Cred } from './security/SecureKeychain';
-import { RootStackParamList } from './NavStackParamTypes';
+import { GenericScreenNavigationProp, RootStackParamList } from './NavStackParamTypes';
 import { DetailScreen } from './screens/DetailScreen';
 import { ModalMessageScreen } from './screens/ModalMessageScreen';
+import { UserDetailScreen } from './screens/UserDetailScreen';
 import { HomeScreen } from './HomeScreen';
-import { Colors } from 'react-native/Libraries/NewAppScreen';
-import { Event } from './ClientWebSocket';
+import { ClientMessage, Event } from './ClientWebSocket';
 import { SplashScreen } from './SplashScreen';
+import { SelectServer } from './screens/SelectServer';
+import { getHeaderTitle } from '@react-navigation/elements';
 
 interface  AuthContextType {
   signIn: (cred: Cred) => Promise<void>;
@@ -28,25 +29,58 @@ interface EventEmitDispatchType {
 //const AuthContext = React.createContext();
 export const AuthContext = React.createContext<AuthContextType>({} as AuthContextType);
 export const UserCredContext = React.createContext<Cred>({} as Cred);
+// write msg
 export const EventEmitStateContext = React.createContext<Array<Event>>([]);
 export const EventEmitDispatchContext = React.createContext(null);
 
-export const NostrServerList:Array<string> = ["wss://relay.nostr.info","wss://relay.damus.io"]
+export const IdMsgMapStateContext = React.createContext<Map<string, ClientMessage>>(new Map());
 
-/*
-function HomeScreen() {
-  const { signOut } = React.useContext(AuthContext);
+const secureStorage : ClientCrypto = new ClientCrypto();
 
+function HomeHeader (navigation: GenericScreenNavigationProp, route, options, back) {
+  const title = getHeaderTitle(options, route.name);
+  const cred : Cred = React.useContext(UserCredContext);
+  let event: Event = new Event()
+  event.pubkey = cred.pubKey;
+
+  let clientMessage : ClientMessage = {id: "", msg: "", kind: 0,remoteUrl: cred.server, fullEvent: event};
+
+  let data = { item: clientMessage, metaMsg: clientMessage }
+  /*
+    <Image
+      style={{ width: 50, height: 50, backgroundColor:'blue' }}
+      //source={require('@expo/snack-static/react-native-logo.png')}
+      source={{uri:""}}
+    />
+    <MyHeader
+        title={title}
+        leftButton={
+          back ? <Pressable onPress={navigation.goBack} >{'<-'}</Pressable> : undefined
+        }
+        style={options.headerStyle}
+      />
+    <View style={{borderStyle:'solid', borderColor:'black', height:'50px', width:'50px', borderRadius:2, backgroundColor:'red'}}>
+      <Text>Home</Text>
+    </View>
+  */
+  //<Text style={options.headerStyle}>{cred.username}</Text>
   return (
-    <View>
-      <Text>Signed in!</Text>
-      <Button title="Sign out" onPress={() => signOut()} />
+    <>
+      <Pressable onPress={() => navigation.navigate('UserDetail', data)}>
+        <Text style={{fontSize:22, fontWeight:'bold', margin:5}}>{cred.username}</Text>
+      </Pressable>
+    </>
+  );
+}
+
+function MyHeader({title, leftButton, style}) {
+  return (
+    <View style={style}>
+      {leftButton}
+      <Text>{title}</Text>
     </View>
   );
 }
-*/
-
-const secureStorage : ClientCrypto = new ClientCrypto();
 
 function SignInScreen({ navigation }) {
 
@@ -62,13 +96,8 @@ function SignInScreen({ navigation }) {
   
   const [userName, setUserName] = React.useState("");
   const [server, setServer] = React.useState("");
-  const [serverList, setServerList] = React.useState<Array<string>>();
   
   const keySize : number = 64
-
-  React.useEffect(()=>{
-    setServerList(NostrServerList);
-  },[]);
 
   const isValidPubKey = (key : string) => {
     setPubkey(key);
@@ -111,20 +140,7 @@ function SignInScreen({ navigation }) {
     } else return false;
   }
 
-  /*
-  const renderItem = ({data}) => {
-    return (
-      <Text>{data.username}</Text>
-    );
-  }
-  */
-
   const renderItem = ({item} : {item:Cred}) => {
-    /*
-      <Pressable onPress={() => signIn(item)}>
-        <Text>{item.username}</Text>
-      </Pressable>
-    */
     return (
       <Pressable
         onPress={() => signIn(item)}
@@ -143,10 +159,7 @@ function SignInScreen({ navigation }) {
 
   return (
     <View>
-      <UserNameServer userName={userName} setUserName={setUserName} server={server} setServer={setServer}
-        serverList={serverList} />
-      
-      
+      <UserNameServer userName={userName} setUserName={setUserName} server={server} setServer={setServer} />
       <TextInput
         placeholder="Public Key"
         value={pubKey}
@@ -193,83 +206,12 @@ function SignInScreen({ navigation }) {
               <DeleteUsers setCredentials={setCredentials}></DeleteUsers>
             </>
           </>
-          
         )
       }      
       
     </View>
   );
 }
-
-const SelectServer = ({server, setServer, serverList}) => {
-  const [modalVisible, setModalVisible] = React.useState(false);
-
-  const setServerOnPress = (serverStr:string) => {
-    setServer(serverStr);
-    setModalVisible(!modalVisible);
-  }
-  
-  const renderItem = ({item} : {item:string}) => {
-    /*
-      <Pressable onPress={() => signIn(item)}>
-        <Text>{item.username}</Text>
-      </Pressable>
-    */
-    return (
-      <Pressable
-        onPress={(e) => setServerOnPress(item)}
-        style={({pressed}) => [
-          {
-            backgroundColor: pressed ? 'rgb(210, 230, 255)' : 'white',
-          },
-          styles.wrapperCustom,
-        ]}>
-        <Text>{item}</Text>
-      </Pressable>
-    )
-  }
-
-  return (
-    <View style={stylesModal.centeredView}>
-      
-      <Modal
-        style={stylesModal.modalCenteredView}
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => {
-          //Alert.alert('Modal has been closed.');
-          setModalVisible(!modalVisible);
-        }}>
-        <View style={stylesModal.centeredView}>
-          
-          <View style={{maxHeight:500}}>
-            <View style={stylesModal.modalView}>
-              <Text style={stylesModal.modalText}>Select Server</Text>
-              <FlatList
-              style={{margin: 40 , maxHeight:300}}
-              data={serverList}
-              renderItem={renderItem}
-              />
-              <Pressable
-                style={[stylesModal.button, stylesModal.buttonClose]}
-                onPress={() => setModalVisible(!modalVisible)}>
-                <Text style={stylesModal.textStyle}>Cancel</Text>
-              </Pressable>
-              
-            </View>
-          </View>
-        </View>
-      </Modal>
-      
-      <Pressable
-        style={[stylesModal.button, stylesModal.buttonOpen, stylesModal.modalButton]}
-        onPress={() => setModalVisible(true)}>
-        <Text style={stylesModal.textStyle}>Select Server</Text>
-      </Pressable>
-    </View>
-  );
-};
 
 const DeleteUsers = ({setCredentials}) => {
   const [modalVisible, setModalVisible] = React.useState(false);
@@ -314,31 +256,6 @@ const DeleteUsers = ({setCredentials}) => {
   );
 };
 
-/*
-  {({pressed}) => (
-    <Text style={styles.text}>{pressed ? 'Pressed!' : 'Press Me'}</Text>
-  )}
-*/
-/*
-function PressHighlight ({opPress, children}) {
-  console.log("[PressHighlight] :: opPress :: " + JSON.stringify(opPress))
-  console.log("[PressHighlight] :: children :: " + JSON.stringify(children))
-  return (
-    <Pressable
-        onPress={opPress}
-        style={({pressed}) => [
-          {
-            backgroundColor: pressed ? 'rgb(210, 230, 255)' : 'white',
-          },
-          styles.wrapperCustom,
-        ]}>
-        {children}
-    </Pressable>
-  )
-}
-*/
-
-
 function deleteUsers() {
   secureStorage.resetUsers().then().catch(e=>{
     console.log("[AppNav] :: deleteUsers :: err " + e)
@@ -358,14 +275,7 @@ function createCredentialObj(privKey: string, pubKey: string, userName: string, 
     return cred;
 }
 
-function UserNameServer ({userName, setUserName, server, setServer, serverList}) {
-  /*
-    <TextInput
-        placeholder="Server"
-        value={server}
-        onChangeText={setServer}
-    />
-  */
+function UserNameServer ({userName, setUserName, server, setServer}) {
   return (
     <>
       <TextInput
@@ -376,25 +286,18 @@ function UserNameServer ({userName, setUserName, server, setServer, serverList})
       <Text>
         {server}
       </Text>
-      <SelectServer server={server} setServer={setServer} serverList={serverList}></SelectServer>
+      <SelectServer server={server} setServer={setServer} ></SelectServer>
     </>
   );
 }
 
 function SignUpScreen({ navigation }) {
-  //const secureStorage : ClientCrypto = new ClientCrypto();
   const { signUp } = React.useContext(AuthContext);
 
   const [pubKey, setPubkey] = React.useState('');
   const [privKey, setPrivKey] = React.useState('');
   const [userName, setUserName] = React.useState('');
   const [server, setServer] = React.useState("");
-  const [serverList, setServerList] = React.useState<Array<string>>();
-  
-
-  React.useEffect(()=>{
-    setServerList(NostrServerList);
-  },[]);
 
   const genKey = async () => {
     let privKeyVal : string = secureStorage.generatePrivateKey();
@@ -404,8 +307,6 @@ function SignUpScreen({ navigation }) {
     setPrivKey(privKeyVal);
     setPubkey(pubKeyVal);
   }
-  //let userToken : Cred = secureStorage.generateCredentials("Demo User", "Demo Server");
-  //let server = "default server"
 
   return (
     <View>
@@ -414,8 +315,7 @@ function SignUpScreen({ navigation }) {
         setUserName={setUserName} 
         server={server} 
         setServer={setServer} 
-        serverList={serverList} />
-
+      />
       <Text selectable={true} selectionColor='grey'>
         pubKey : {pubKey}
       </Text>
@@ -440,7 +340,6 @@ function SignUpScreen({ navigation }) {
 const Stack = createNativeStackNavigator();
 
 export default function App({ navigation }) {
-  //const secureStorage : ClientCrypto = new ClientCrypto();
   interface AuthScreenState {
     isLoading: boolean,
     isSignout: boolean,
@@ -539,15 +438,6 @@ export default function App({ navigation }) {
         // We will also need to handle errors if sign in failed
         // After getting token, we need to persist the token using `SecureStore` or any other encrypted storage
         // In the example, we'll use a dummy token
-        /*
-        let cred : Cred = {
-          privKey : privKey,
-          pubKey : pubkey,
-          username : "",
-          server : "",
-          lastUpdated : new Date()
-        }
-        */
 
         if(secureStorage.isValidCred(cred)) {
           dispatch({ type: 'SIGN_IN', token: cred });
@@ -601,62 +491,68 @@ export default function App({ navigation }) {
   return (
     <AuthContext.Provider value={authContext}>
       <UserCredContext.Provider value={state.userToken}>
-        <EventEmitDispatchContext.Provider value={eventEmitDispatch}>
-        <EventEmitStateContext.Provider value={eventEmitState}>
-          <NavigationContainer>
-            <Stack.Navigator>
-              {state.isLoading ? (
-                // We haven't finished checking for the token yet
-                <Stack.Screen name="Loading" component={SplashScreen} />
-              ) : state.userToken == null ? (
-                // No token found, user isn't signed in
-                <>
-                  <Stack.Screen
-                    name="SignIn"
-                    component={SignInScreen}
-                    options={{
-                      title: 'Sign in',
-                      // When logging out, a pop animation feels intuitive
-                      animationTypeForReplace: state.isSignout ? 'pop' : 'push',
-                    }}
-                  />
-                  <Stack.Screen
-                    name="SignUp"
-                    component={SignUpScreen}
-                    options={{
-                      title: 'Sign up',
-                      // When logging out, a pop animation feels intuitive
-                      animationTypeForReplace: state.isSignout ? 'pop' : 'push',
-                    }}
-                  />
-                </>
-              ) : (
-                // User is signed in
-                <>
-                  <Stack.Group>
-                      <Stack.Screen name="Home" component={HomeScreen} />
-                      <Stack.Screen name="Details" component={DetailScreen} />
-                      <Stack.Screen name="Message" component={ModalMessageScreen} />
-                  </Stack.Group>
-                  
-                </>
-              )}
-            </Stack.Navigator>
-          </NavigationContainer>
-        </EventEmitStateContext.Provider>
-        </EventEmitDispatchContext.Provider>
+        <IdMsgMapStateContext.Provider value={new Map()}>
+          <EventEmitDispatchContext.Provider value={eventEmitDispatch}>
+          <EventEmitStateContext.Provider value={eventEmitState}>
+            
+            <NavigationContainer>
+              <Stack.Navigator>
+                {state.isLoading ? (
+                  // We haven't finished checking for the token yet
+                  <Stack.Screen name="Loading" component={SplashScreen} />
+                ) : state.userToken == null ? (
+                  // No token found, user isn't signed in
+                  <>
+                    <Stack.Screen
+                      name="SignIn"
+                      component={SignInScreen}
+                      options={{
+                        title: 'Sign in',
+                        // When logging out, a pop animation feels intuitive
+                        animationTypeForReplace: state.isSignout ? 'pop' : 'push',
+                      }}
+                    />
+                    <Stack.Screen
+                      name="SignUp"
+                      component={SignUpScreen}
+                      options={{
+                        title: 'Sign up',
+                        // When logging out, a pop animation feels intuitive
+                        animationTypeForReplace: state.isSignout ? 'pop' : 'push',
+                      }}
+                    />
+                  </>
+                ) : (
+                  // User is signed in
+                  <>
+                    <Stack.Group>
+                        <Stack.Screen name="Home" component={HomeScreen} 
+                          //options={{ headerTitle: (props) => <LogoTitle {...props} /> }}
+                          //options={ ( props ) => (LogoTitle(props)) }
+                          //options={({ route }) => ({ title: route.params.name })}
+                          options={{
+                            header: ({ navigation, route, options, back }) => HomeHeader(navigation, route, options, back)
+                          }}
+                        />
+                        <Stack.Screen name="Details" component={DetailScreen} />
+                        <Stack.Screen name="Message" component={ModalMessageScreen} />
+                        <Stack.Screen name="UserDetail" component={UserDetailScreen} />
+                    </Stack.Group>
+                    
+                  </>
+                )}
+              </Stack.Navigator>
+            </NavigationContainer>
+
+          </EventEmitStateContext.Provider>
+          </EventEmitDispatchContext.Provider>
+        </IdMsgMapStateContext.Provider>
       </UserCredContext.Provider>
     </AuthContext.Provider>
   );
 }
 
-/*
-  <Stack.Group screenOptions={{ presentation: 'modal' }}>
-      <Stack.Screen name="Message" component={ModalMessageScreen} />
-  </Stack.Group>
-*/
-
-const styles = StyleSheet.create({
+export const styles = StyleSheet.create({
   // pressable
   container: {
     flex: 1,
@@ -680,7 +576,7 @@ const styles = StyleSheet.create({
 });
 
 
-const stylesModal = StyleSheet.create({
+export const stylesModal = StyleSheet.create({
   // modal
   modalCenteredView: {
     //position:'absolute',

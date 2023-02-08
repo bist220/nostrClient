@@ -2,11 +2,11 @@ import * as React from 'react';
 import {Button, Text, View} from 'react-native';
 import {
   AuthContext,
-  NostrServerList,
   secureStorage,
   UserNameServer,
   createCredentialObj,
 } from './AppNav';
+import { NostrServerList } from "./NostrServerList";
 
 export function SignUpScreen({navigation}) {
   //const secureStorage : ClientCrypto = new ClientCrypto();

@@ -1,24 +1,16 @@
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import ClientWebSocket, { ClientMessage } from "./ClientWebSocket";
+import { NativeStackScreenProps, NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { ClientMessage } from "./ClientWebSocket";
 
-/*
-type RootStackParamList = {
-    Home: undefined;
-    Profile: { userId: string };
-    Feed: { sort: 'latest' | 'top' } | undefined;
-};
-  
-type Props = NativeStackScreenProps<RootStackParamList, 'Profile'>;
-*/
 export type RootStackParamList = {
     Loading : undefined;
     SignUp : undefined;
     SignIn : undefined;
     Home: undefined;
-    Details: { item: ClientMessage; metaMsgs: Map<string, ClientMessage>; };
+    Details: { item: ClientMessage, metaMsg: ClientMessage; };
     Message: undefined;
-    //{clientSocket : ClientWebSocket};
+    UserDetail: { item: ClientMessage, metaMsg: ClientMessage; };
 };
+
 export type LoadingScreenProps = NativeStackScreenProps<RootStackParamList, 'Loading'>;
 export type SignUpScreenProps = NativeStackScreenProps<RootStackParamList, 'SignUp'>;
 export type SignInScreenProps = NativeStackScreenProps<RootStackParamList, 'SignIn'>;
@@ -26,3 +18,10 @@ export type SignInScreenProps = NativeStackScreenProps<RootStackParamList, 'Sign
 export type HomeScreenProps = NativeStackScreenProps<RootStackParamList, 'Home'>;
 export type DetailScreenProps = NativeStackScreenProps<RootStackParamList, 'Details'>;
 export type MessageScreenProps = NativeStackScreenProps<RootStackParamList, 'Message'>;
+export type UserDetailScreenProps = NativeStackScreenProps<RootStackParamList, 'UserDetail'>;
+
+
+export type GenericScreenNavigationProp = NativeStackNavigationProp < RootStackParamList >;
+export type DetailScreenNavigationProp = NativeStackNavigationProp< RootStackParamList, 'Details'>;
+export type UserDetailScreenNavigationProp = NativeStackNavigationProp< RootStackParamList, 'UserDetail'>;
+

@@ -3,13 +3,13 @@ import {Button, Text, TextInput, View, FlatList, Pressable} from 'react-native';
 import {Cred} from './security/SecureKeychain';
 import {
   AuthContext,
-  NostrServerList,
   secureStorage,
   styles,
   UserNameServer,
   createCredentialObj,
   DeleteUsers,
 } from './AppNav';
+import { NostrServerList } from "./NostrServerList";
 
 export function SignInScreen({navigation}) {
   const {signIn} = React.useContext(AuthContext);
