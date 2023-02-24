@@ -13,7 +13,7 @@
     "@noble/hashes": "^1.2.0",
     "@noble/secp256k1": "^1.7.1",
     "@react-navigation/native": "^6.1.4",
-    "@react-navigation/native-stack": "^6.9.9",
+    "@react-navigation/native-stack": "^6.9.11",
     "bech32": "^2.0.0",
     "buffer": "^6.0.3",
     "react": "18.2.0",
